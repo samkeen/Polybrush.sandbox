@@ -40,6 +40,18 @@ public class PlayerController : MonoBehaviour
     private CharacterController controller;
     private float _velocityYAxis;
 
+    private bool isInDialog;
+
+    public void OnDialogueStart()
+    {
+        isInDialog = true;
+    }
+
+    public void OnDialogueEnd()
+    {
+        isInDialog = false;
+    }
+
     private void Start()
     {
         this._animator = GetComponent<Animator>();
@@ -56,6 +68,42 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
+        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+        if (!isInDialog)
+        {
+            var inputDirection = DetermineDirection();
+            Move(inputDirection, isRunning);
+            if (Input.GetKeyDown(KeyCode.Space))
+            {
+                Jump();
+            }
+        }
+        Animate(isRunning);
+    }
+
+    private void Animate(bool running)
+    {
+        // ========================
+        // Animator
+        // see: https://www.youtube.com/watch?v=ZwD1UHNCzOc&list=PLXXlQcsWSuUUxIR9opITwTDKQMmuviNDe&index=2
+        // ========================
+        // calculate the animator's percent used to blend from walk to run
+        float animationSpeedPercent = 0; // leave at zero if were are inDialogue
+        if (!isInDialog)
+        {
+            animationSpeedPercent = ((running)
+                ? _currentSpeed / runSpeed
+                : _currentSpeed / walkSpeed * .5f);
+        }
+        _animator.SetFloat(
+            "speedPercent",
+            animationSpeedPercent,
+            speedSmoothTime,
+            Time.deltaTime);
+    }
+
+    private static Vector2 DetermineDirection()
+    {
         // ========================
         // Input
         // ========================
@@ -66,30 +114,7 @@ public class PlayerController : MonoBehaviour
         // turn the input vector into a direction
         //   "When normalized, a vector keeps the same direction but its length is 1.0"
         Vector2 inputDirection = input.normalized;
-        
-        //
-        
-        
-        bool running = Input.GetKey(KeyCode.LeftShift);
-        Move(inputDirection, running);
-        if (Input.GetKeyDown(KeyCode.Space))
-        {
-            Jump();
-        }
-        
-        // ========================
-        // Animator
-        // see: https://www.youtube.com/watch?v=ZwD1UHNCzOc&list=PLXXlQcsWSuUUxIR9opITwTDKQMmuviNDe&index=2
-        // ========================
-        // calculate the animator's percent used to blend from walk to run
-        float animationSpeedPercent = ((running)
-            ? _currentSpeed / runSpeed
-            : _currentSpeed / walkSpeed * .5f);
-        _animator.SetFloat(
-            "speedPercent",
-            animationSpeedPercent,
-            speedSmoothTime,
-            Time.deltaTime);
+        return inputDirection;
     }
 
     void Move(Vector2 inputDirection, bool running)
