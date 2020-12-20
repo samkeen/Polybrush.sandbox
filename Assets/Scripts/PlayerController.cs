@@ -34,50 +34,54 @@ public class PlayerController : MonoBehaviour
     private float _turnSmoothVelocity;
     private float _speedSmoothVelocity;
     private float _currentSpeed;
-    
+
     private Transform mainCamera;
-    
+
     private CharacterController controller;
     private float _velocityYAxis;
 
     private bool isInDialog;
 
-    public void OnDialogueStart()
+    private void OnDialogueStart()
     {
         isInDialog = true;
     }
 
-    public void OnDialogueEnd()
+    private void OnDialogueEnd()
     {
         isInDialog = false;
     }
 
     private void Start()
     {
+        FindObjectOfType<DialogEvents>().DialogueStart += OnDialogueStart;
+        FindObjectOfType<DialogEvents>().DialogueEnd += OnDialogueEnd;
         this._animator = GetComponent<Animator>();
         if (lockCursor)
         {
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
+
         // need the camera transform in order to move in direction of camera
         mainCamera = Camera.main.transform;
-        
+
         controller = GetComponent<CharacterController>();
     }
 
     void Update()
     {
         bool isRunning = Input.GetKey(KeyCode.LeftShift);
+        var inputDirection = DetermineDirection();
+        Move(inputDirection, isRunning);
         if (!isInDialog)
         {
-            var inputDirection = DetermineDirection();
-            Move(inputDirection, isRunning);
             if (Input.GetKeyDown(KeyCode.Space))
             {
                 Jump();
             }
         }
+
         Animate(isRunning);
     }
 
@@ -95,6 +99,7 @@ public class PlayerController : MonoBehaviour
                 ? _currentSpeed / runSpeed
                 : _currentSpeed / walkSpeed * .5f);
         }
+
         _animator.SetFloat(
             "speedPercent",
             animationSpeedPercent,
@@ -117,38 +122,47 @@ public class PlayerController : MonoBehaviour
         return inputDirection;
     }
 
-    void Move(Vector2 inputDirection, bool running)
+    private void Move(Vector2 inputDirection, bool running)
     {
-        // determine the character's rotation
-        // (-) = atan(y/x) but in unity we rotate anticlockwise 90deg, so
-        // r = 90 - (-), or r = atan(x/y)
-        // below we could have done Mathf.Atan(input_direction.x/input_direction.y) but Atan2 with 2
-        //   params takes care of division by zero
-        // ------------------------------------------------------------------ y is actually z here
-        Vector3 moveDirection = Vector3.one;
-        if (inputDirection != Vector2.zero)
+        if (isInDialog) // only apply gravity (in case we were midair when dialog started)
         {
-            // adding 
-            float targetRotation = Mathf.Atan2(inputDirection.x, inputDirection.y)
-                                   * Mathf.Rad2Deg
-                                   // this causes the play's forward movement to be that of the camera
-                                   + this.mainCamera.eulerAngles.y;
-            
-            //
-            moveDirection = Quaternion.Euler(0, targetRotation, 0) * Vector3.forward;
-            
-            // Note in brackeys video they us
-            // transform.rotation = Quaternion.Euler(0, targetAngle, 0)
-            // transform.eulerAngles is susceptible to gimble lock, but ok if rotating on one axis as
-            //    we are doing here
-            transform.eulerAngles = Vector3.up * Mathf.SmoothDampAngle(
-                transform.eulerAngles.y, // current angle
-                targetRotation, // target angle
-                ref _turnSmoothVelocity, // allow function to reference the _turnSmoothVelocity var
-                GetModifiedSmoothTime(turnSmoothTime) // time in sec to perform rotation
-            );
+            _velocityYAxis += Time.deltaTime * gravity;
+            Vector3 velocity = Vector3.up * _velocityYAxis;
+            controller.Move(velocity * Time.deltaTime);
         }
-        
+        else // perform full movement calculations
+        {
+            Vector3 moveDirection = Vector3.one;
+            if (inputDirection != Vector2.zero)
+            {
+                moveDirection = CalculateMoveDirection(inputDirection);
+            }
+            AdjustCurrentSpeed(inputDirection, running);
+            ApplyMovement(moveDirection);
+            // update character currentSpeed to actual speed (e.g. 0 if collided with wall)
+            // get the speed (.magnitude) in the x,z plane
+            _currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
+        }
+        // if we are on ground reset our velocity in y direction to zero 
+        if (controller.isGrounded)
+        {
+            _velocityYAxis = 0;
+        }
+    }
+
+    private void ApplyMovement(Vector3 moveDirection)
+    {
+        // move the character in the direction they are facing in worldspace
+        // adjust y velocity for gravity
+        _velocityYAxis += Time.deltaTime * gravity;
+        // combine (x,z) and y velocities                             /----gravity adjustment---\
+        //                                                           (                           )
+        Vector3 velocity = moveDirection.normalized * _currentSpeed + Vector3.up * _velocityYAxis;
+        controller.Move(velocity * Time.deltaTime);
+    }
+
+    private void AdjustCurrentSpeed(Vector2 inputDirection, bool running)
+    {
         // is inputDirection.magnitude is 0, speed is zero, else the inputDirection.magnitude will be
         //   1, which will not change the speed
         float targetSpeed = ((running) ? this.runSpeed : this.walkSpeed) * inputDirection.magnitude;
@@ -157,28 +171,37 @@ public class PlayerController : MonoBehaviour
             targetSpeed,
             ref _speedSmoothVelocity,
             GetModifiedSmoothTime(speedSmoothTime));
-
-
-        // move the character in the direction they are facing in worldspace
-        // adjust y velocity for gravity
-        _velocityYAxis += Time.deltaTime * gravity;
-        // combine (x,z) and y velocities                           gravity adjustment
-        Vector3 velocity = moveDirection.normalized * _currentSpeed + Vector3.up * _velocityYAxis;
-        controller.Move(velocity * Time.deltaTime);
-
-        // update character currentSpeed to actual speed (e.g. 0 if collided with wall)
-        // get the speed (.magnitude) in the x,z plane
-        _currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
-
-
-        // if we are on ground reset our velocity in y direction to zero 
-        if (controller.isGrounded)
-        {
-            _velocityYAxis = 0;
-        }
-
-        
     }
+
+    private Vector3 CalculateMoveDirection(Vector2 inputDirection)
+    {
+        // determine the character's rotation
+        // (-) = atan(y/x) but in unity we rotate anticlockwise 90deg, so
+        // r = 90 - (-), or r = atan(x/y)
+        // below we could have done Mathf.Atan(input_direction.x/input_direction.y) but Atan2 with 2
+        //   params takes care of division by zero
+        // ------------------------------------------------------------------ y is actually z here
+        Vector3 moveDirection;
+        // adding 
+        float targetRotation = Mathf.Atan2(inputDirection.x, inputDirection.y)
+                               * Mathf.Rad2Deg
+                               // this causes the play's forward movement to be that of the camera
+                               + this.mainCamera.eulerAngles.y;
+        //
+        moveDirection = Quaternion.Euler(0, targetRotation, 0) * Vector3.forward;
+        // Note in brackeys video they use
+        // transform.rotation = Quaternion.Euler(0, targetAngle, 0)
+        // transform.eulerAngles is susceptible to gimble lock, but ok if rotating on one axis as
+        //    we are doing here
+        transform.eulerAngles = Vector3.up * Mathf.SmoothDampAngle(
+            transform.eulerAngles.y, // current angle
+            targetRotation, // target angle
+            ref _turnSmoothVelocity, // allow function to reference the _turnSmoothVelocity var
+            GetModifiedSmoothTime(turnSmoothTime) // time in sec to perform rotation
+        );
+        return moveDirection;
+    }
+
     private void Jump()
     {
         if (controller.isGrounded)
@@ -210,5 +233,15 @@ public class PlayerController : MonoBehaviour
 
         // less the percent, greater smoothTime will be thus slowing response for rotation and movement
         return smoothTime / airControlPercent;
+    }
+
+    private void OnDisable()
+    {
+        var dialogueEvents = FindObjectOfType<DialogEvents>();
+        if (dialogueEvents != null)
+        {
+            dialogueEvents.DialogueStart += OnDialogueStart;
+            dialogueEvents.DialogueEnd += OnDialogueEnd;
+        }
     }
 }
