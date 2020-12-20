@@ -27,34 +27,37 @@ SOFTWARE.
 using UnityEngine;
 using Yarn.Unity;
 
-/// attached to the non-player characters, and stores the name of the Yarn
-/// node that should be run when you talk to them.
-public class NPC : MonoBehaviour
+namespace Characters
 {
-    public string characterName = "";
-
-    public string talkToNode = "";
-
-    [Header("Optional")] public YarnProgram scriptToLoad;
-
-    void Start()
+    /// attached to the non-player characters, and stores the name of the Yarn
+    /// node that should be run when you talk to them.
+    public class Npc : MonoBehaviour
     {
-        if (scriptToLoad != null)
+        public string characterName = "";
+
+        public string talkToNode = "";
+
+        [Header("Optional")] public YarnProgram scriptToLoad;
+
+        void Start()
         {
-            DialogueRunner dialogueRunner = FindObjectOfType<Yarn.Unity.DialogueRunner>();
-            dialogueRunner.Add(scriptToLoad);
+            if (scriptToLoad != null)
+            {
+                DialogueRunner dialogueRunner = FindObjectOfType<Yarn.Unity.DialogueRunner>();
+                dialogueRunner.Add(scriptToLoad);
+            }
         }
-    }
     
-    public void TriggerDialogue ()
-    {
-        // @todo convert to singleton, use singleton class from Munch
-        FindObjectOfType<DialogueRunner>().StartDialogue(talkToNode);
-    }
+        public void TriggerDialogue ()
+        {
+            // @todo convert to singleton, use singleton class from Munch
+            FindObjectOfType<DialogueRunner>().StartDialogue(talkToNode);
+        }
 
-    private void OnTriggerEnter(Collider other)
-    {
-        Debug.Log($"TRIGGER, other: ${other}");
-        this.TriggerDialogue();
+        private void OnTriggerEnter(Collider other)
+        {
+            Debug.Log($"TRIGGER, other: ${other}");
+            this.TriggerDialogue();
+        }
     }
 }

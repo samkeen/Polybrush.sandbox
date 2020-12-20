@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using Dialogue;
 using UnityEngine;
 using UnityEngine.UIElements;
 using Cursor = UnityEngine.Cursor;
