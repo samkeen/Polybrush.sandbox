@@ -38,26 +38,30 @@ public class PlayerController : MonoBehaviour
 
     private Transform mainCamera;
 
-    private CharacterController controller;
+    private CharacterController characterController;
     private float _velocityYAxis;
 
-    private bool isInDialog;
+    private bool isInDialogue;
 
     private void OnDialogueStart()
     {
-        isInDialog = true;
+        isInDialogue = true;
     }
 
     private void OnDialogueEnd()
     {
-        isInDialog = false;
+        isInDialogue = false;
     }
 
     private void Start()
     {
+        _animator = GetComponent<Animator>();
+        characterController = GetComponent<CharacterController>();
+
+        // listen for dialog start and end
         FindObjectOfType<DialogEvents>().DialogueStart += OnDialogueStart;
         FindObjectOfType<DialogEvents>().DialogueEnd += OnDialogueEnd;
-        this._animator = GetComponent<Animator>();
+        // 
         if (lockCursor)
         {
             Cursor.lockState = CursorLockMode.Locked;
@@ -66,16 +70,14 @@ public class PlayerController : MonoBehaviour
 
         // need the camera transform in order to move in direction of camera
         mainCamera = Camera.main.transform;
-
-        controller = GetComponent<CharacterController>();
     }
 
     void Update()
     {
-        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+        var isRunning = Input.GetKey(KeyCode.LeftShift);
         var inputDirection = DetermineDirection();
         Move(inputDirection, isRunning);
-        if (!isInDialog)
+        if (!isInDialogue)
         {
             if (Input.GetKeyDown(KeyCode.Space))
             {
@@ -94,7 +96,7 @@ public class PlayerController : MonoBehaviour
         // ========================
         // calculate the animator's percent used to blend from walk to run
         float animationSpeedPercent = 0; // leave at zero if were are inDialogue
-        if (!isInDialog)
+        if (!isInDialogue)
         {
             animationSpeedPercent = ((running)
                 ? _currentSpeed / runSpeed
@@ -116,36 +118,37 @@ public class PlayerController : MonoBehaviour
         // create a vector2 for the keyboard input (x,z).  y is handed separately to allow 
         //   for jumping and gravity
         // --------------------------------------------------------- y is actually z here
-        Vector2 input = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
+        var input = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
         // turn the input vector into a direction
         //   "When normalized, a vector keeps the same direction but its length is 1.0"
-        Vector2 inputDirection = input.normalized;
-        return inputDirection;
+        return input.normalized;
     }
 
     private void Move(Vector2 inputDirection, bool running)
     {
-        if (isInDialog) // only apply gravity (in case we were midair when dialog started)
+        if (isInDialogue) // only apply gravity (in case we were midair when dialog started)
         {
             _velocityYAxis += Time.deltaTime * gravity;
             Vector3 velocity = Vector3.up * _velocityYAxis;
-            controller.Move(velocity * Time.deltaTime);
+            characterController.Move(velocity * Time.deltaTime);
         }
         else // perform full movement calculations
         {
-            Vector3 moveDirection = Vector3.one;
+            var moveDirection = Vector3.one;
             if (inputDirection != Vector2.zero)
             {
                 moveDirection = CalculateMoveDirection(inputDirection);
             }
+
             AdjustCurrentSpeed(inputDirection, running);
             ApplyMovement(moveDirection);
             // update character currentSpeed to actual speed (e.g. 0 if collided with wall)
             // get the speed (.magnitude) in the x,z plane
-            _currentSpeed = new Vector2(controller.velocity.x, controller.velocity.z).magnitude;
+            _currentSpeed = new Vector2(characterController.velocity.x, characterController.velocity.z).magnitude;
         }
+
         // if we are on ground reset our velocity in y direction to zero 
-        if (controller.isGrounded)
+        if (characterController.isGrounded)
         {
             _velocityYAxis = 0;
         }
@@ -159,7 +162,7 @@ public class PlayerController : MonoBehaviour
         // combine (x,z) and y velocities                             /----gravity adjustment---\
         //                                                           (                           )
         Vector3 velocity = moveDirection.normalized * _currentSpeed + Vector3.up * _velocityYAxis;
-        controller.Move(velocity * Time.deltaTime);
+        characterController.Move(velocity * Time.deltaTime);
     }
 
     private void AdjustCurrentSpeed(Vector2 inputDirection, bool running)
@@ -171,7 +174,7 @@ public class PlayerController : MonoBehaviour
             _currentSpeed,
             targetSpeed,
             ref _speedSmoothVelocity,
-            GetModifiedSmoothTime(speedSmoothTime));
+            GetMovementSmoothTime(speedSmoothTime));
     }
 
     private Vector3 CalculateMoveDirection(Vector2 inputDirection)
@@ -182,30 +185,38 @@ public class PlayerController : MonoBehaviour
         // below we could have done Mathf.Atan(input_direction.x/input_direction.y) but Atan2 with 2
         //   params takes care of division by zero
         // ------------------------------------------------------------------ y is actually z here
-        Vector3 moveDirection;
         // adding 
         float targetRotation = Mathf.Atan2(inputDirection.x, inputDirection.y)
                                * Mathf.Rad2Deg
                                // this causes the play's forward movement to be that of the camera
                                + this.mainCamera.eulerAngles.y;
         //
-        moveDirection = Quaternion.Euler(0, targetRotation, 0) * Vector3.forward;
-        // Note in brackeys video they use
-        // transform.rotation = Quaternion.Euler(0, targetAngle, 0)
-        // transform.eulerAngles is susceptible to gimble lock, but ok if rotating on one axis as
-        //    we are doing here
+        var moveDirection = Quaternion.Euler(0, targetRotation, 0) * Vector3.forward;
+        setCharacterRotation(targetRotation);
+        return moveDirection;
+    }
+
+    // https://docs.unity3d.com/2020.2/Documentation/ScriptReference/Transform-eulerAngles.html
+    // Note: Never rely on reading the .eulerAngles to increment the rotation
+    //   The rotation as Euler angles in degrees; represents rotation in world space (vs  Transform.localEulerAngles)
+    // transform.eulerAngles is susceptible to gimble lock, but ok if rotating on one axis as
+    //    we are doing here
+    private void setCharacterRotation(float targetRotation)
+    {
+        // https://docs.unity3d.com/2020.2/Documentation/ScriptReference/Mathf.SmoothDampAngle.html
+        // Gradually changes an angle given in degrees towards a desired goal angle over time.
         transform.eulerAngles = Vector3.up * Mathf.SmoothDampAngle(
             transform.eulerAngles.y, // current angle
             targetRotation, // target angle
             ref _turnSmoothVelocity, // allow function to reference the _turnSmoothVelocity var
-            GetModifiedSmoothTime(turnSmoothTime) // time in sec to perform rotation
+            // time varies on if airport or grounded
+            GetMovementSmoothTime(turnSmoothTime) // time in sec to perform rotation
         );
-        return moveDirection;
     }
 
     private void Jump()
     {
-        if (controller.isGrounded)
+        if (characterController.isGrounded)
         {
             // determine jump velocity to allow us to attain jump height
             //                   Kinematic eq; see: https://www.youtube.com/watch?v=v1V3T5BPd7E
@@ -214,26 +225,18 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Modify the smooth time used for rotation and movement bases on if the character is airborne
-    /// </summary>
-    /// <param name="smoothTime"></param>
-    /// <returns></returns>
-    private float GetModifiedSmoothTime(float smoothTime)
+    // Modify the smooth time used for rotation and movement based on if the character is airborne
+    private float GetMovementSmoothTime(float smoothTime)
     {
-        if (controller.isGrounded)
+        if (characterController.isGrounded)
         {
             return smoothTime;
         }
 
-        // protect against division by 0
-        if (airControlPercent == 0)
-        {
-            return float.MaxValue;
-        }
-
-        // less the percent, greater smoothTime will be thus slowing response for rotation and movement
-        return smoothTime / airControlPercent;
+        return airControlPercent == 0 // protect against division by 0
+            ? float.MaxValue
+            // less the percent, greater smoothTime will be thus slowing response for rotation and movement
+            : smoothTime / airControlPercent;
     }
 
     private void OnDisable()
