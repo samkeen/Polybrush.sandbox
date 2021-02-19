@@ -16,14 +16,21 @@ using Cursor = UnityEngine.Cursor;
 /// </summary>
 public class PlayerController : MonoBehaviour
 {
+    // these are the 'steady-state' speed for walk and run.  We accelerate/decelerate
+    // to and from them.
     [SerializeField] private float walkSpeed = 2;
     [SerializeField] private float runSpeed = 3;
+    // This is the current speed.  Held between this.walkSpeed and this.runSpeed
+    private float _currentHorizontalSpeed;
+    //
+    private float _currentVerticalSpeed;
+
     [SerializeField] private bool lockCursor = true;
 
-    [SerializeField] private float speedSmoothTime = 0.1f;
+    // Damping functions are used to go from current to target speed|angle
+    [SerializeField] private float speedDampTime = 0.1f;
+    [SerializeField] private float turnDampTime = 0.2f;
 
-    // roughly number of seconds to go from current angle to the target angle.
-    [SerializeField] private float turnSmoothTime = 0.2f;
     [SerializeField] private float gravity = -12;
 
     [SerializeField] private float jumpHeight = 1;
@@ -32,14 +39,12 @@ public class PlayerController : MonoBehaviour
     [Range(0, 1)] [SerializeField] private float airControlPercent;
 
     private Animator _animator;
-    private float _turnSmoothVelocity;
-    private float _speedSmoothVelocity;
-    private float _currentSpeed;
+
 
     private Transform mainCamera;
 
     private CharacterController characterController;
-    private float _velocityYAxis;
+
 
     private bool isInDialogue;
 
@@ -75,7 +80,8 @@ public class PlayerController : MonoBehaviour
     void Update()
     {
         var isRunning = Input.GetKey(KeyCode.LeftShift);
-        var inputDirection = DetermineDirection();
+        // this is the direction the input device is indicating in the x/z plane 
+        var inputDirection = DetermineInputDirection();
         Move(inputDirection, isRunning);
         if (!isInDialogue)
         {
@@ -98,19 +104,19 @@ public class PlayerController : MonoBehaviour
         float animationSpeedPercent = 0; // leave at zero if were are inDialogue
         if (!isInDialogue)
         {
-            animationSpeedPercent = ((running)
-                ? _currentSpeed / runSpeed
-                : _currentSpeed / walkSpeed * .5f);
+            animationSpeedPercent = running
+                ? _currentHorizontalSpeed / runSpeed
+                : _currentHorizontalSpeed / walkSpeed * .5f;
         }
 
         _animator.SetFloat(
             "speedPercent",
             animationSpeedPercent,
-            speedSmoothTime,
+            speedDampTime,
             Time.deltaTime);
     }
 
-    private static Vector2 DetermineDirection()
+    private static Vector2 DetermineInputDirection()
     {
         // ========================
         // Input
@@ -126,55 +132,54 @@ public class PlayerController : MonoBehaviour
 
     private void Move(Vector2 inputDirection, bool running)
     {
-        if (isInDialogue) // only apply gravity (in case we were midair when dialog started)
+        if (!characterController.isGrounded && isInDialogue) // finish jump if entered dialog in midair
         {
-            _velocityYAxis += Time.deltaTime * gravity;
-            Vector3 velocity = Vector3.up * _velocityYAxis;
-            characterController.Move(velocity * Time.deltaTime);
+            _currentVerticalSpeed += Time.deltaTime * gravity;
+            characterController.Move(Vector3.up * (_currentVerticalSpeed * Time.deltaTime));
         }
         else // perform full movement calculations
         {
-            var moveDirection = Vector3.one;
-            if (inputDirection != Vector2.zero)
-            {
-                moveDirection = CalculateMoveDirection(inputDirection);
-            }
-
-            AdjustCurrentSpeed(inputDirection, running);
-            ApplyMovement(moveDirection);
+            DampCurrentSpeed(inputDirection, running);
+            ApplyMovement(inputDirection);
             // update character currentSpeed to actual speed (e.g. 0 if collided with wall)
             // get the speed (.magnitude) in the x,z plane
-            _currentSpeed = new Vector2(characterController.velocity.x, characterController.velocity.z).magnitude;
+            _currentHorizontalSpeed =
+                new Vector2(characterController.velocity.x, characterController.velocity.z).magnitude;
         }
 
         // if we are on ground reset our velocity in y direction to zero 
         if (characterController.isGrounded)
         {
-            _velocityYAxis = 0;
+            _currentVerticalSpeed = 0;
         }
     }
 
-    private void ApplyMovement(Vector3 moveDirection)
+    private void ApplyMovement(Vector2 inputDirection)
     {
+        var moveDirection = inputDirection != Vector2.zero
+            ? CalculateMoveDirection(inputDirection)
+            : Vector3.one;
         // move the character in the direction they are facing in worldspace
-        // adjust y velocity for gravity
-        _velocityYAxis += Time.deltaTime * gravity;
-        // combine (x,z) and y velocities                             /----gravity adjustment---\
-        //                                                           (                           )
-        Vector3 velocity = moveDirection.normalized * _currentSpeed + Vector3.up * _velocityYAxis;
+        // adjust y velocity for gravity (gravity is negative)
+        _currentVerticalSpeed += Time.deltaTime * gravity;
+        // combine (x,z) and y velocities                                          /----gravity adjustment----------\
+        //                                                                        (                                  )
+        var velocity = moveDirection.normalized * _currentHorizontalSpeed + Vector3.up * _currentVerticalSpeed;
         characterController.Move(velocity * Time.deltaTime);
     }
 
-    private void AdjustCurrentSpeed(Vector2 inputDirection, bool running)
+    private float _speedSmoothVelocity;
+
+
+    private void DampCurrentSpeed(Vector2 inputDirection, bool running)
     {
-        // is inputDirection.magnitude is 0, speed is zero, else the inputDirection.magnitude will be
-        //   1, which will not change the speed
-        float targetSpeed = ((running) ? this.runSpeed : this.walkSpeed) * inputDirection.magnitude;
-        _currentSpeed = Mathf.SmoothDamp(
-            _currentSpeed,
-            targetSpeed,
+        _currentHorizontalSpeed = Mathf.SmoothDamp(
+            _currentHorizontalSpeed,
+            // if inputDirection.magnitude is 0, speed is zero, else the inputDirection.magnitude will be
+            //   1, which will not change the speed
+            (running ? runSpeed : walkSpeed) * inputDirection.magnitude,
             ref _speedSmoothVelocity,
-            GetMovementSmoothTime(speedSmoothTime));
+            AirborneAdjustedDampingTime(speedDampTime));
     }
 
     private Vector3 CalculateMoveDirection(Vector2 inputDirection)
@@ -201,6 +206,8 @@ public class PlayerController : MonoBehaviour
     //   The rotation as Euler angles in degrees; represents rotation in world space (vs  Transform.localEulerAngles)
     // transform.eulerAngles is susceptible to gimble lock, but ok if rotating on one axis as
     //    we are doing here
+    private float _turnSmoothVelocity;
+
     private void setCharacterRotation(float targetRotation)
     {
         // https://docs.unity3d.com/2020.2/Documentation/ScriptReference/Mathf.SmoothDampAngle.html
@@ -210,7 +217,7 @@ public class PlayerController : MonoBehaviour
             targetRotation, // target angle
             ref _turnSmoothVelocity, // allow function to reference the _turnSmoothVelocity var
             // time varies on if airport or grounded
-            GetMovementSmoothTime(turnSmoothTime) // time in sec to perform rotation
+            AirborneAdjustedDampingTime(turnDampTime) // time in sec to perform rotation
         );
     }
 
@@ -221,12 +228,12 @@ public class PlayerController : MonoBehaviour
             // determine jump velocity to allow us to attain jump height
             //                   Kinematic eq; see: https://www.youtube.com/watch?v=v1V3T5BPd7E
             float jumpVelocity = Mathf.Sqrt(-2 * gravity * jumpHeight);
-            _velocityYAxis = jumpVelocity;
+            _currentVerticalSpeed = jumpVelocity;
         }
     }
 
     // Modify the smooth time used for rotation and movement based on if the character is airborne
-    private float GetMovementSmoothTime(float smoothTime)
+    private float AirborneAdjustedDampingTime(float smoothTime)
     {
         if (characterController.isGrounded)
         {
