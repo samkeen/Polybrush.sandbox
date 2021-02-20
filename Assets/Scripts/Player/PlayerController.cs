@@ -127,6 +127,7 @@ public class PlayerController : MonoBehaviour
         //   "When normalized, a vector keeps the same direction but its length is 1.0"
         return input.normalized;
     }
+
     // 1. determine the direction indicated by input device
     // 2. if we've entered a dialog while in a jump, simply allow jump to finish (no other movement)
     // 3. else, calculate the current damped horizontal speed
@@ -161,23 +162,24 @@ public class PlayerController : MonoBehaviour
 
     private void ApplyMovement(Vector2 inputDirection)
     {
-        var moveDirection = CalculateMoveDirection(inputDirection);
+        var inputIndicatedHorizontalMoveDirection = CalculateHorizontalMoveDirection(inputDirection);
         // move the character in the direction they are facing in worldspace
         // adjust y velocity for gravity (gravity is negative)
         _currentVerticalSpeed += Time.deltaTime * gravity;
-        // combine (x,z) and y velocities                                          /----gravity adjustment----------\
-        //                                                                        (                                  )
-        var velocity = moveDirection.normalized * _currentHorizontalSpeed + Vector3.up * _currentVerticalSpeed;
+        // combine horizontal (x,z) and vertical (y) velocities
+        var velocity = inputIndicatedHorizontalMoveDirection.normalized * _currentHorizontalSpeed
+            + Vector3.up * _currentVerticalSpeed;
         characterController.Move(velocity * Time.deltaTime);
     }
 
-    private Vector3 CalculateMoveDirection(Vector2 inputDirection)
+    private Vector3 CalculateHorizontalMoveDirection(Vector2 inputDirection)
     {
         // If no indicated direction input, return (1,1,1)
         if (inputDirection == Vector2.zero)
         {
             return Vector3.one;
         }
+
         // Calculating the angle between where we are facing and the indicated input direction
         // See README:CalculateMoveDirection
         var targetInputAngle = Mathf.Atan2(inputDirection.x, inputDirection.y) * Mathf.Rad2Deg;
@@ -187,7 +189,8 @@ public class PlayerController : MonoBehaviour
         // targetInputAngle is 0 if there is no movement input, thus targetYAxisRotationAngle will simply be cameraZAngle; the
         // direction the camera is facing.
         var blendedCameraAndInputYAxisRotationAngle = targetInputAngle + cameraYAxisRotationAngle;
-        Debug.Log($"Camera Y Axis rotation angle: {cameraYAxisRotationAngle} :: targetInputAngle: {targetInputAngle} :: blendedCameraAndInputYAxisRotationAngle: {blendedCameraAndInputYAxisRotationAngle}");
+        Debug.Log(
+            $"Camera Y Axis rotation angle: {cameraYAxisRotationAngle} :: targetInputAngle: {targetInputAngle} :: blendedCameraAndInputYAxisRotationAngle: {blendedCameraAndInputYAxisRotationAngle}");
         // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         // https://docs.unity3d.com/2020.2/Documentation/Manual/class-Quaternion.html
@@ -243,7 +246,7 @@ public class PlayerController : MonoBehaviour
             ref _turnSmoothVelocity, // allow function to reference the _turnSmoothVelocity var
             // time varies on if airport or grounded
             AirborneAdjustedDampingTime(turnDampTime)); // time in sec to perform rotation
-        
+
         // https://docs.unity3d.com/ScriptReference/Transform-eulerAngles.html
         // This sets the angle of rotation about the axis
         transform.eulerAngles = Vector3.up * dampedYAxisRotationAngle;
